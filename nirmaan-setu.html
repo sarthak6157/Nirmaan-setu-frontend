@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nirmaan Setu — Tender Transparency Platform</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:#f4f6f4; --card:#ffffff; --border:#dbe4e0; --muted:#5f6f6a; --text:#16241f;
+    --primary:#0f6f66; --primary-dark:#0b4f49; --primary-darker:#073633;
+    --accent:#c8791a; --accent2:#b3123a; --success:#5c7a1e;
+    --radius:16px; --shadow:0 2px 12px rgba(0,0,0,.07); --shadow-lg:0 8px 32px rgba(7,54,51,.14);
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:'Outfit',system-ui,sans-serif; }
+  .mono { font-family:'JetBrains Mono','Courier New',monospace; }
+  input, select, textarea { font-family:'Outfit',system-ui,sans-serif; font-size:14.5px; padding:10px 13px; border:1.5px solid var(--border); border-radius:10px; background:#fff; color:var(--text); width:100%; outline:none; }
+  input:focus, select:focus, textarea:focus { border-color:var(--primary); }
+  ::placeholder { color:#9aa2b1; }
+  label.field-label { font-size:12.5px; font-weight:500; color:var(--muted); margin-bottom:5px; display:block; }
+  .card { background:var(--card); border-radius:var(--radius); box-shadow:var(--shadow); border:1px solid var(--border); }
+  button { transition: transform .12s ease, box-shadow .12s ease; cursor:pointer; font-family:'Outfit',system-ui,sans-serif; }
+  button:hover { transform: translateY(-1px); }
+  button:disabled { cursor:not-allowed; opacity:.55; transform:none; }
+  button:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
+  .btn-primary { font-size:14px; font-weight:600; color:#fff; background:linear-gradient(135deg,var(--primary),var(--primary-dark)); border:none; border-radius:10px; padding:10px 20px; box-shadow:0 2px 8px rgba(11,79,73,.35); }
+  .btn-accent { font-size:14px; font-weight:600; color:#fff; background:var(--accent2); border:none; border-radius:10px; padding:10px 20px; box-shadow:0 2px 8px rgba(179,18,58,.35); }
+  .btn-ghost { font-size:14px; font-weight:600; color:var(--primary); background:#fff; border:1.5px solid var(--border); border-radius:10px; padding:9px 16px; }
+  .btn-nav { font-size:14px; font-weight:600; color:#fff; background:rgba(255,255,255,.14); border:1.5px solid rgba(255,255,255,.28); border-radius:10px; padding:9px 16px; }
+  .pill { font-size:12.5px; font-weight:600; padding:5px 12px; border-radius:999px; white-space:nowrap; }
+  .tender-row { transition: box-shadow .15s ease, transform .15s ease; cursor:pointer; }
+  .tender-row:hover { box-shadow: var(--shadow-lg); transform: translateY(-2px); }
+  a.linklike { color:var(--primary); cursor:pointer; text-decoration:none; }
+  .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media (max-width: 760px) { .detail-grid { grid-template-columns: 1fr !important; } .grid-2 { grid-template-columns: 1fr !important; } }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+/*
+ * ============================================================================
+ * REQUIRED CONFIG — set this to your deployed backend's URL before going live.
+ * Example: "https://nirmaan-setu-api.onrender.com/api"
+ * ============================================================================
+ */
+const API_BASE = "https://YOUR-RENDER-BACKEND-URL.onrender.com/api";
+
+const C = { bg:"#f4f6f4", card:"#ffffff", border:"#dbe4e0", muted:"#5f6f6a", text:"#16241f",
+  primary:"#0f6f66", primaryDark:"#0b4f49", primaryDarker:"#073633",
+  accent:"#c8791a", accent2:"#b3123a", success:"#5c7a1e" };
+
+const CATEGORIES = ["Road Construction","School Building","Water Supply","Hospital Equipment","Park Development","Public Sanitation"];
+
+/* ---------- global state ---------- */
+let state = {
+  loaded:false,
+  errorBanner:"",
+  tenders:[], companies:[],
+  view:"browse", selectedTenderId:null, selectedTender:null, selectedTenderUpdates:[], detailLoading:false,
+  session:null,
+  search:"", categoryFilter:"all", flaggedOnly:false,
+  loginRole:"company", loginError:"", loginLoading:false,
+  complaintForm:{ name:"", contact:"", description:"" }, complaintSubmitted:false, complaintSubmitting:false,
+  updateForm:{ date:"", workDone:"", costUsedLakh:"", stagePercent:"", note:"", photoDataUrl:"", cameraOpen:false, cameraError:"", lat:null, lng:null, locationStatus:"idle", locationError:"" },
+  openUpdateFor:null, updateSubmitting:false,
+  myTenders:[], myTenderUpdates:{}, myTendersLoading:false,
+  adminTab:"overview", adminComplaints:[], adminUpdates:[],
+  newTender:{ title:"", department:"", location:"", category:CATEGORIES[0], budgetLakh:"", awardedTo:"", startDate:"", endDate:"", description:"", siteLat:"", siteLng:"" },
+  newTenderError:"",
+  complaintDrafts:{}, ratingDrafts:{},
+};
+
+/* ---------- helpers ---------- */
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function fmtMoney(lakh){ return "₹" + Number(lakh).toLocaleString("en-IN") + " L"; }
+function fmtDate(d){ return new Date(d).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}); }
+function ratingColor(r){ return r>=4? C.success : r>=3? C.accent : C.accent2; }
+function todayStr(){ return new Date().toISOString().slice(0,10); }
+
+/* ---------- API layer ---------- */
+function authHeaders(){
+  return state.session?.token ? { "Authorization": "Bearer " + state.session.token } : {};
+}
+
+async function api(path, opts={}){
+  const res = await fetch(API_BASE + path, {
+    method: opts.method || "GET",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  if (!res.ok){
+    let detail = `Request failed (${res.status})`;
+    try { const j = await res.json(); if (j.detail) detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail); } catch(e){}
+    throw new Error(detail);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+function showError(msg){ state.errorBanner = msg; render(); }
+function dismissError(){ state.errorBanner = ""; render(); }
+
+/* ---------- session persistence ---------- */
+function saveSession(){ try { localStorage.setItem("nirmaan_setu_session", JSON.stringify(state.session)); } catch(e){} }
+function loadStoredSession(){ try { const raw = localStorage.getItem("nirmaan_setu_session"); return raw ? JSON.parse(raw) : null; } catch(e){ return null; } }
+function clearStoredSession(){ try { localStorage.removeItem("nirmaan_setu_session"); } catch(e){} }
+
+/* ---------- boot ---------- */
+async function init(){
+  state.session = loadStoredSession();
+  try {
+    const [tenders, companies] = await Promise.all([api("/tenders"), api("/companies")]);
+    state.tenders = tenders;
+    state.companies = companies;
+  } catch (e) {
+    state.errorBanner = "Could not reach the Nirmaan Setu server. " + e.message;
+    state.tenders = []; state.companies = [];
+  }
+  state.loaded = true;
+  render();
+  if (state.session?.role === "company") loadMyTenders();
+  if (state.session?.role === "admin") { loadAdminComplaints(); loadAdminUpdates(); }
+}
+
+/* ---------- navigation ---------- */
+function setView(v){
+  state.view = v;
+  render();
+  if (v==="companyDash" && state.session?.role==="company") loadMyTenders();
+  if (v==="adminDash" && state.session?.role==="admin") { loadAdminComplaints(); loadAdminUpdates(); }
+}
+
+async function refreshTenders(){
+  try { state.tenders = await api("/tenders"); } catch(e){ showError("Could not refresh tenders: " + e.message); }
+}
+
+async function openTender(id){
+  state.view = "detail"; state.selectedTenderId = id; state.detailLoading = true;
+  state.complaintForm = { name:"", contact:"", description:"" }; state.complaintSubmitted = false;
+  render();
+  try {
+    const [tender, updates] = await Promise.all([api(`/tenders/${id}`), api(`/updates/tender/${id}`)]);
+    state.selectedTender = tender; state.selectedTenderUpdates = updates;
+  } catch (e) {
+    state.selectedTender = null; state.selectedTenderUpdates = [];
+    showError("Could not load this tender: " + e.message);
+  }
+  state.detailLoading = false;
+  render();
+}
+
+/* ---------- auth ---------- */
+function setLoginRole(r){ state.loginRole=r; state.loginError=""; render(); }
+
+async function handleLogin(){
+  const credential = document.getElementById("login-username")?.value.trim() || "";
+  const password = document.getElementById("login-password")?.value || "";
+  if (!credential || !password){ state.loginError = "Enter your username and password."; render(); return; }
+  state.loginLoading = true; state.loginError = ""; render();
+  try {
+    const res = await api("/auth/login", { method:"POST", body:{ role: state.loginRole, credential, password } });
+    state.session = { token: res.access_token, id: res.user.id, role: res.user.role, display_name: res.user.display_name, rating: res.user.rating };
+    saveSession();
+    state.view = state.loginRole==="company" ? "companyDash" : "adminDash";
+  } catch (e) {
+    state.loginError = e.message || "Invalid credentials.";
+  }
+  state.loginLoading = false;
+  render();
+  if (state.session?.role === "company") loadMyTenders();
+  if (state.session?.role === "admin") { loadAdminComplaints(); loadAdminUpdates(); }
+}
+
+function handleLogout(){ state.session = null; clearStoredSession(); state.view = "browse"; render(); }
+
+/* ---------- citizen reports ---------- */
+async function submitComplaint(){
+  const name = document.getElementById("complaint-name")?.value.trim() || "";
+  const contact = document.getElementById("complaint-contact")?.value.trim() || "";
+  const description = document.getElementById("complaint-desc")?.value.trim() || "";
+  if (!description) return;
+  state.complaintSubmitting = true; render();
+  try {
+    await api("/complaints", { method:"POST", body:{ tender_id: state.selectedTenderId, name, contact, description } });
+    state.complaintSubmitted = true;
+  } catch (e) {
+    showError("Could not submit your report: " + e.message);
+  }
+  state.complaintSubmitting = false;
+  render();
+}
+
+/* ---------- live camera capture (no file picker / gallery access) ---------- */
+let activeStream = null;
+
+function toggleUpdateForm(tenderId){
+  state.openUpdateFor = state.openUpdateFor===tenderId ? null : tenderId;
+  state.updateForm = { date: todayStr(), workDone:"", costUsedLakh:"", stagePercent:"", note:"", photoDataUrl:"", cameraOpen:false, cameraError:"", lat:null, lng:null, locationStatus:"idle", locationError:"" };
+  closeCamera(true);
+  render();
+}
+
+async function openCamera(){
+  state.updateForm.cameraError = "";
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    state.updateForm.cameraError = "This browser does not support camera capture.";
+    render();
+    return;
+  }
+  try {
+    activeStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+    state.updateForm.cameraOpen = true;
+    render();
+    const video = document.getElementById("camera-video");
+    if (video){ video.srcObject = activeStream; await video.play().catch(()=>{}); }
+  } catch (e) {
+    state.updateForm.cameraError = "Could not open the camera. Check camera permission for this page and try again.";
+    render();
+  }
+}
+
+function capturePhoto(){
+  const video = document.getElementById("camera-video");
+  if (!video || !video.videoWidth) return;
+  const maxDim = 900;
+  const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(video.videoWidth * scale);
+  canvas.height = Math.round(video.videoHeight * scale);
+  canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+  state.updateForm.photoDataUrl = canvas.toDataURL("image/jpeg", 0.75);
+  closeCamera(false);
+}
+
+function closeCamera(skipRender){
+  if (activeStream){ activeStream.getTracks().forEach(tr => tr.stop()); activeStream = null; }
+  state.updateForm.cameraOpen = false;
+  if (!skipRender) render();
+}
+
+function retakePhoto(){ state.updateForm.photoDataUrl = ""; render(); }
+
+function captureLocation(){
+  if (!navigator.geolocation){
+    state.updateForm.locationStatus = "error";
+    state.updateForm.locationError = "This browser does not support location capture.";
+    render();
+    return;
+  }
+  state.updateForm.locationStatus = "capturing";
+  render();
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      state.updateForm.lat = pos.coords.latitude;
+      state.updateForm.lng = pos.coords.longitude;
+      state.updateForm.locationStatus = "captured";
+      state.updateForm.locationError = "";
+      render();
+    },
+    (err) => {
+      state.updateForm.locationStatus = "error";
+      state.updateForm.locationError = err.message || "Could not get your location. Check location permissions.";
+      render();
+    },
+    { enableHighAccuracy: true, timeout: 15000 }
+  );
+}
+
+/* ---------- company dashboard ---------- */
+async function loadMyTenders(){
+  state.myTendersLoading = true; render();
+  try {
+    const tenders = await api("/tenders/mine");
+    state.myTenders = tenders;
+    await Promise.all(tenders.map(async t => {
+      try { state.myTenderUpdates[t.id] = await api(`/updates/tender/${t.id}`); }
+      catch(e){ state.myTenderUpdates[t.id] = []; }
+    }));
+  } catch (e) {
+    showError("Could not load your tenders: " + e.message);
+    state.myTenders = [];
+  }
+  state.myTendersLoading = false;
+  render();
+}
+
+async function submitUpdate(tenderId){
+  const date = document.getElementById("upd-date")?.value;
+  const workDone = document.getElementById("upd-work")?.value.trim();
+  const cost = document.getElementById("upd-cost")?.value;
+  const stage = document.getElementById("upd-stage")?.value;
+  const note = document.getElementById("upd-note")?.value.trim() || "";
+  const f = state.updateForm;
+  if (!date || !workDone || cost==="" || stage==="" || !f.photoDataUrl || f.locationStatus!=="captured") return;
+
+  state.updateSubmitting = true; render();
+  try {
+    const created = await api("/updates", { method:"POST", body:{
+      tender_id: tenderId, date, work_done: workDone, cost_used_lakh: Number(cost), stage_percent: Number(stage), note,
+      photo_base64: f.photoDataUrl, photo_lat: f.lat, photo_lng: f.lng,
+    }});
+    state.myTenderUpdates[tenderId] = [...(state.myTenderUpdates[tenderId] || []), created];
+    try {
+      const refreshed = await api(`/tenders/${tenderId}`);
+      state.myTenders = state.myTenders.map(t => t.id===tenderId ? refreshed : t);
+      state.tenders = state.tenders.map(t => t.id===tenderId ? refreshed : t);
+    } catch(e){}
+    state.openUpdateFor = null;
+  } catch (e) {
+    showError("Could not save this update: " + e.message);
+  }
+  state.updateSubmitting = false;
+  render();
+}
+
+/* ---------- admin dashboard ---------- */
+function setAdminTab(t){ state.adminTab=t; render(); }
+
+async function loadAdminComplaints(){
+  try { state.adminComplaints = await api("/complaints"); } catch(e){ showError("Could not load citizen reports: " + e.message); state.adminComplaints = []; }
+  render();
+}
+async function loadAdminUpdates(){
+  try { state.adminUpdates = await api("/updates"); } catch(e){ showError("Could not load progress photos: " + e.message); state.adminUpdates = []; }
+  render();
+}
+
+async function resolveComplaint(id, status){
+  const note = document.getElementById("resp-"+id)?.value ?? "";
+  try {
+    const updated = await api(`/complaints/${id}`, { method:"PATCH", body:{ status, admin_response: note } });
+    state.adminComplaints = state.adminComplaints.map(c => c.id===id ? updated : c);
+  } catch (e) { showError("Could not update this report: " + e.message); }
+  render();
+}
+
+async function setAiCheckStatus(updateId, status){
+  const note = document.getElementById("ai-note-"+updateId)?.value ?? "";
+  try {
+    const updated = await api(`/updates/${updateId}/review`, { method:"PATCH", body:{ status, note } });
+    state.adminUpdates = state.adminUpdates.map(u => u.id===updateId ? updated : u);
+    await refreshTenders();
+  } catch (e) { showError("Could not update this review: " + e.message); }
+  render();
+}
+
+async function saveRating(username){
+  const val = parseFloat(document.getElementById("rating-"+username)?.value);
+  if (isNaN(val) || val<0 || val>5) return;
+  try {
+    const updated = await api(`/companies/${username}/rating`, { method:"PATCH", body:{ rating: val } });
+    state.companies = state.companies.map(c => c.id===username ? updated : c);
+  } catch (e) { showError("Could not update the rating: " + e.message); }
+  render();
+}
+
+async function submitNewTender(){
+  const f = {
+    title: document.getElementById("nt-title")?.value.trim(),
+    department: document.getElementById("nt-dept")?.value.trim(),
+    location: document.getElementById("nt-loc")?.value.trim(),
+    category: document.getElementById("nt-cat")?.value,
+    budget_lakh: document.getElementById("nt-budget")?.value,
+    awarded_to: document.getElementById("nt-company")?.value,
+    start_date: document.getElementById("nt-start")?.value,
+    end_date: document.getElementById("nt-end")?.value,
+    description: document.getElementById("nt-desc")?.value.trim(),
+    site_latitude: document.getElementById("nt-lat")?.value,
+    site_longitude: document.getElementById("nt-lng")?.value,
+  };
+  if (!f.title || !f.department || !f.location || !f.budget_lakh || !f.awarded_to || !f.start_date || !f.end_date){
+    state.newTenderError = "Please fill in all required fields.";
+    render();
+    return;
+  }
+  try {
+    const created = await api("/tenders", { method:"POST", body:{
+      ...f, budget_lakh: Number(f.budget_lakh),
+      site_latitude: f.site_latitude!=="" ? Number(f.site_latitude) : null,
+      site_longitude: f.site_longitude!=="" ? Number(f.site_longitude) : null,
+    }});
+    state.tenders = [...state.tenders, created];
+    state.newTenderError = "";
+  } catch (e) {
+    state.newTenderError = e.message;
+  }
+  render();
+}
+
+function updateSearch(v){ state.search=v; render(); }
+function updateCategoryFilter(v){ state.categoryFilter=v; render(); }
+function updateFlaggedOnly(v){ state.flaggedOnly=v; render(); }
+
+/* ---------- small components ---------- */
+function ratingSeal(rating, size){
+  size = size || 44;
+  const color = ratingColor(rating);
+  return `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 3px 10px ${color}55;">
+    <span class="mono" style="font-size:${(size*0.34).toFixed(0)}px;color:#fff;font-weight:700;">${Number(rating||0).toFixed(1)}</span>
+  </div>`;
+}
+function statusPill(tender){
+  const flags = tender.flags || [];
+  let label = tender.status==="completed" ? "Completed" : "Ongoing";
+  let color = tender.status==="completed" ? C.success : C.primary;
+  if (flags.length>0){ label="Flagged"; color=C.accent2; }
+  return `<span class="pill" style="color:${color};background:${color}18;">${label}</span>`;
+}
+function warnIcon(color){ return `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" style="flex-shrink:0;margin-top:2px"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`; }
+function checkIcon(color){ return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`; }
+function cameraIcon(color){ return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>`; }
+
+function aiCheckPill(status){
+  const map = {
+    pending_ai_review: [C.accent, "Pending photo review"],
+    verified: [C.success, "Photo verified"],
+    flagged: [C.accent2, "Photo flagged"],
+  };
+  const [color,label] = map[status] || [C.muted, "No photo on file"];
+  return `<span class="pill" style="color:${color};background:${color}18;">${label}</span>`;
+}
+function locationPill(u){
+  if (u.distance_meters==null) return `<span class="pill" style="color:${C.muted};background:${C.muted}18;">No site coordinates on file</span>`;
+  const ok = !u.location_flag;
+  const color = ok ? C.success : C.accent2;
+  return `<span class="pill" style="color:${color};background:${color}18;">${ok? "On-site" : "Off-site"} · ${Math.round(u.distance_meters)}m from registered site</span>`;
+}
+
+/* ---------- view builders ---------- */
+function navbarHTML(){
+  const loggedIn = state.session;
+  return `
+  <div style="background:linear-gradient(135deg,${C.primaryDarker} 0%,${C.primary} 55%,${C.primaryDark} 100%);padding:20px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;">
+    <div style="display:flex;align-items:center;gap:12px;cursor:pointer;" onclick="setView('browse')">
+      <div style="width:38px;height:38px;border-radius:11px;background:${C.accent};display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(200,121,26,.5);">
+        <span style="font-weight:800;color:#fff;font-size:15px;">NS</span>
+      </div>
+      <div>
+        <div style="font-weight:800;font-size:20px;color:#fff;line-height:1.1;">Nirmaan Setu</div>
+        <div style="font-size:12px;color:rgba(255,255,255,.65);">Government tender transparency platform</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <button class="btn-nav" onclick="setView('browse')">Browse tenders</button>
+      ${loggedIn ? `
+        <button class="btn-nav" onclick="setView('${state.session.role==='company'?'companyDash':'adminDash'}')">${esc(state.session.display_name)}</button>
+        <button class="btn-accent" onclick="handleLogout()">Log out</button>
+      ` : `
+        <button class="btn-primary" style="background:${C.accent};box-shadow:0 2px 8px rgba(200,121,26,.45);" onclick="setView('login')">Company / admin login</button>
+      `}
+    </div>
+  </div>`;
+}
+
+function errorBannerHTML(){
+  if (!state.errorBanner) return "";
+  return `<div style="background:${C.accent2}12;border-bottom:1.5px solid ${C.accent2}40;padding:10px 24px;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+    <span style="font-size:13px;color:${C.accent2};">${esc(state.errorBanner)}</span>
+    <button class="btn-ghost" style="padding:4px 12px;font-size:12px;" onclick="dismissError()">Dismiss</button>
+  </div>`;
+}
+
+function statsStripHTML(){
+  if (state.view!=="browse") return "";
+  const totalFlagged = state.tenders.filter(t => (t.flags||[]).length>0).length;
+  const items = [
+    ["Tenders monitored", state.tenders.length, C.primary],
+    ["Flagged for review", totalFlagged, C.accent2],
+    ["Companies rated", state.companies.length, C.success],
+  ];
+  return `<div style="display:flex;gap:14px;padding:20px 24px 4px;flex-wrap:wrap;">
+    ${items.map(([label,val,color]) => `
+      <div class="card" style="padding:14px 18px;min-width:150px;flex:1 1 150px;">
+        <div class="mono" style="font-size:24px;color:${color};font-weight:700;">${val}</div>
+        <div style="font-size:12.5px;color:${C.muted};">${label}</div>
+      </div>`).join("")}
+  </div>`;
+}
+
+function browseHTML(){
+  const filtered = state.tenders.filter(t => {
+    if (state.categoryFilter!=="all" && t.category!==state.categoryFilter) return false;
+    if (state.flaggedOnly && (t.flags||[]).length===0) return false;
+    if (state.search.trim()){
+      const q = state.search.toLowerCase();
+      if (!t.title.toLowerCase().includes(q) && !t.location.toLowerCase().includes(q) && !t.id.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+  return `
+  <div class="card" style="padding:16px;display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap;align-items:center;">
+    <div style="position:relative;flex:1 1 240px;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="${C.muted}" stroke-width="2" style="position:absolute;left:12px;top:13px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input id="search-input" style="padding-left:34px;" placeholder="Search by title, place, or tender no." value="${esc(state.search)}" oninput="updateSearch(this.value)">
+    </div>
+    <select style="width:200px;" onchange="updateCategoryFilter(this.value)">
+      <option value="all" ${state.categoryFilter==="all"?"selected":""}>All categories</option>
+      ${CATEGORIES.map(c => `<option value="${c}" ${state.categoryFilter===c?"selected":""}>${c}</option>`).join("")}
+    </select>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13.5px;color:${C.muted};cursor:pointer;">
+      <input type="checkbox" style="width:auto;" ${state.flaggedOnly?"checked":""} onchange="updateFlaggedOnly(this.checked)"> Flagged only
+    </label>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:12px;">
+    ${filtered.length===0 ? `<div class="card" style="padding:24px;color:${C.muted};font-size:14px;text-align:center;">${state.tenders.length===0 ? "No tenders published yet." : "No tenders match this search."}</div>` : ""}
+    ${filtered.map(t => {
+      const company = state.companies.find(c=>c.id===t.awarded_to);
+      return `<div class="card tender-row" style="padding:16px 18px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;" onclick="openTender('${t.id}')">
+        <div class="mono" style="font-size:12px;color:${C.muted};width:108px;flex-shrink:0;">${t.id}</div>
+        <div style="flex:1 1 220px;min-width:200px;">
+          <div style="font-size:16px;font-weight:700;">${esc(t.title)}</div>
+          <div style="font-size:12.5px;color:${C.muted};">${esc(t.location)} · ${esc(company?company.display_name:t.awarded_to)}</div>
+        </div>
+        <div class="mono" style="font-size:13.5px;width:90px;text-align:right;flex-shrink:0;font-weight:600;">${fmtMoney(t.budget_lakh)}</div>
+        ${statusPill(t)}
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="${C.muted}" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+      </div>`;
+    }).join("")}
+  </div>`;
+}
+
+function detailHTML(){
+  if (state.detailLoading) return `<div class="card" style="padding:40px;text-align:center;color:${C.muted};">Loading tender…</div>`;
+  const t = state.selectedTender;
+  if (!t) return `<div class="card" style="padding:24px;">Tender not found. <a class="linklike" onclick="setView('browse')">Back to tenders</a></div>`;
+  const flags = t.flags || [];
+  const company = state.companies.find(c=>c.id===t.awarded_to);
+  const tUpdates = state.selectedTenderUpdates.slice().sort((a,b)=> a.date<b.date?-1:1);
+  return `
+  <button class="btn-ghost" style="border:none;background:transparent;padding:4px 0;display:flex;align-items:center;gap:6px;margin-bottom:16px;" onclick="setView('browse')">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="${C.primary}" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg> Back to tenders
+  </button>
+  <div class="card" style="padding:22px;margin-bottom:18px;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;">
+      <div>
+        <div class="mono" style="font-size:12.5px;color:${C.muted};">${t.id}</div>
+        <h1 style="font-size:24px;font-weight:800;margin:4px 0;">${esc(t.title)}</h1>
+      </div>
+      ${statusPill(t)}
+    </div>
+    ${flags.length>0 ? `<div style="background:${C.accent2}12;border:1.5px solid ${C.accent2}40;border-radius:12px;padding:12px 14px;margin-top:14px;">
+      ${flags.map((f,i)=>`<div style="display:flex;gap:8px;align-items:flex-start;font-size:13.5px;color:${C.accent2};margin-top:${i>0?6:0}px;">${warnIcon(C.accent2)}<span>${esc(f)}</span></div>`).join("")}
+    </div>` : ""}
+  </div>
+  <div class="detail-grid" style="display:grid;grid-template-columns:minmax(220px,1fr) 2fr;gap:18px;">
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <div class="card" style="padding:18px;">
+        ${[["Department",t.department],["Location",t.location],["Category",t.category],["Budget",fmtMoney(t.budget_lakh)],["Start date",fmtDate(t.start_date)],["Target completion",fmtDate(t.end_date)]]
+          .map(([label,val],i)=>`<div style="margin-bottom:${i<5?13:0}px;"><div style="font-size:11.5px;color:${C.muted};font-weight:500;">${label}</div><div style="font-size:14.5px;font-weight:500;">${esc(val)}</div></div>`).join("")}
+        ${t.description ? `<p style="font-size:13.5px;color:${C.muted};line-height:1.5;margin-top:12px;border-top:1px solid ${C.border};padding-top:12px;">${esc(t.description)}</p>` : ""}
+      </div>
+      ${company ? `<div class="card" style="padding:18px;display:flex;align-items:center;gap:12px;">
+        ${ratingSeal(company.rating)}
+        <div><div style="font-size:15px;font-weight:700;">${esc(company.display_name)}</div><div style="font-size:12px;color:${C.muted};">Contractor rating, out of 5</div></div>
+      </div>` : ""}
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <div class="card" style="padding:20px;">
+        <h2 style="font-size:17px;font-weight:700;margin-bottom:14px;">Work timeline</h2>
+        ${tUpdates.length===0 ? `<div style="font-size:13.5px;color:${C.muted};">No progress has been reported yet.</div>` : `
+        <div style="border-left:3px solid ${C.border};padding-left:18px;">
+          ${tUpdates.map(u => `<div style="margin-bottom:20px;position:relative;">
+            <div style="position:absolute;left:-24.5px;top:4px;width:10px;height:10px;border-radius:50%;background:${C.primary};box-shadow:0 0 0 3px ${C.primary}25;"></div>
+            <div class="mono" style="font-size:12px;color:${C.muted};">${fmtDate(u.date)}</div>
+            <div style="font-size:14.5px;margin:3px 0 6px;">${esc(u.work_done)}</div>
+            ${u.photo_base64 ? `<img src="${u.photo_base64}" alt="Site progress photo" style="width:180px;max-width:100%;border-radius:10px;border:1px solid ${C.border};display:block;margin-bottom:8px;">` : ""}
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+              <span class="mono" style="font-size:12px;color:${C.primary};background:${C.primary}12;padding:3px 9px;border-radius:999px;">Cost used: ${fmtMoney(u.cost_used_lakh)}</span>
+              <span class="mono" style="font-size:12px;color:${C.success};background:${C.success}12;padding:3px 9px;border-radius:999px;">Stage: ${u.stage_percent}%</span>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              ${aiCheckPill(u.ai_check_status)}
+              ${u.photo_base64 ? locationPill(u) : ""}
+            </div>
+            ${u.ai_check_note ? `<div style="font-size:12.5px;color:${C.muted};margin-top:6px;font-style:italic;">Review note: ${esc(u.ai_check_note)}</div>` : ""}
+            ${u.note ? `<div style="font-size:12.5px;color:${C.muted};margin-top:5px;">${esc(u.note)}</div>` : ""}
+          </div>`).join("")}
+        </div>`}
+      </div>
+      <div class="card" style="padding:20px;">
+        <h2 style="font-size:17px;font-weight:700;margin-bottom:4px;">Report a mismatch</h2>
+        <p style="font-size:13px;color:${C.muted};margin-bottom:14px;">If what you see on the ground doesn't match the cost or quality reported here, file it — the district office reviews every report.</p>
+        ${state.complaintSubmitted ? `<div style="display:flex;gap:8px;align-items:center;color:${C.success};font-size:14px;font-weight:600;">${checkIcon(C.success)} Report filed. The tender office has been notified.</div>` : `
+        <div style="display:grid;gap:10px;max-width:460px;">
+          <div><label class="field-label">Your name (optional)</label><input id="complaint-name"></div>
+          <div><label class="field-label">Phone or email (optional, for follow-up)</label><input id="complaint-contact"></div>
+          <div><label class="field-label">What did you see? *</label><textarea id="complaint-desc" style="min-height:90px;resize:vertical;"></textarea></div>
+          <button class="btn-accent" style="width:fit-content;" ${state.complaintSubmitting?"disabled":""} onclick="submitComplaint()">${state.complaintSubmitting?"Submitting…":"Submit report"}</button>
+        </div>`}
+      </div>
+    </div>
+  </div>`;
+}
+
+function loginHTML(){
+  return `
+  <div style="max-width:400px;margin:20px auto 0;">
+    <div class="card" style="padding:26px;">
+      <h1 style="font-size:24px;font-weight:800;margin-bottom:4px;">Sign in</h1>
+      <p style="font-size:13.5px;color:${C.muted};margin-bottom:20px;">For tender companies filing updates, and the administrative office managing the ledger.</p>
+      <div style="display:flex;margin-bottom:18px;background:${C.bg};border-radius:999px;padding:4px;">
+        ${["company","admin"].map(r => `<button onclick="setLoginRole('${r}')" style="flex:1;padding:9px 0;font-weight:600;font-size:13.5px;border:none;border-radius:999px;background:${state.loginRole===r?C.primary:"transparent"};color:${state.loginRole===r?"#fff":C.muted};">${r==="company"?"Tender company":"Administrative office"}</button>`).join("")}
+      </div>
+      <div style="display:grid;gap:12px;">
+        <div><label class="field-label">Username</label><input id="login-username" onkeydown="if(event.key==='Enter')handleLogin()"></div>
+        <div><label class="field-label">Password</label><input id="login-password" type="password" onkeydown="if(event.key==='Enter')handleLogin()"></div>
+        ${state.loginError ? `<div style="font-size:13px;color:${C.accent2};">${esc(state.loginError)}</div>` : ""}
+        <button class="btn-primary" ${state.loginLoading?"disabled":""} onclick="handleLogin()">${state.loginLoading?"Signing in…":"Sign in"}</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function companyDashHTML(){
+  const s = state.session;
+  const acct = state.companies.find(c=>c.id===s.id);
+  if (state.myTendersLoading && state.myTenders.length===0){
+    return `<div class="card" style="padding:40px;text-align:center;color:${C.muted};">Loading your tenders…</div>`;
+  }
+  return `
+  <div class="card" style="padding:20px;display:flex;align-items:center;gap:16px;margin-bottom:18px;">
+    ${ratingSeal(acct?acct.rating:s.rating, 54)}
+    <div><h1 style="font-size:22px;font-weight:800;">${esc(s.display_name)}</h1><div style="font-size:13px;color:${C.muted};">${state.myTenders.length} tender${state.myTenders.length!==1?"s":""} awarded to you</div></div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:14px;">
+    ${state.myTenders.map(t => {
+      const tUpdates = state.myTenderUpdates[t.id] || [];
+      const flags = t.flags || [];
+      const isOpen = state.openUpdateFor===t.id;
+      const f = state.updateForm;
+      const canSubmit = !!(f.photoDataUrl && f.locationStatus==="captured");
+      return `<div class="card" style="padding:18px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+          <div>
+            <div class="mono" style="font-size:12px;color:${C.muted};">${t.id}</div>
+            <div style="font-size:16.5px;font-weight:700;">${esc(t.title)}</div>
+            <div style="font-size:12.5px;color:${C.muted};">Budget ${fmtMoney(t.budget_lakh)} · ${tUpdates.length} update${tUpdates.length!==1?"s":""} logged</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            ${flags.length>0 ? `<span style="display:flex;align-items:center;gap:5px;color:${C.accent2};font-size:12.5px;font-weight:600;">${warnIcon(C.accent2)} ${flags.length} flag${flags.length!==1?"s":""}</span>` : ""}
+            <button class="btn-ghost" onclick="toggleUpdateForm('${t.id}')">${isOpen?"Cancel":"+ Add today's update"}</button>
+          </div>
+        </div>
+        ${isOpen ? `<div class="grid-2" style="margin-top:16px;max-width:560px;background:${C.bg};border-radius:12px;padding:14px;">
+          <div><label class="field-label">Date</label><input id="upd-date" type="date" value="${f.date}"></div>
+          <div><label class="field-label">Stage complete (%)</label><input id="upd-stage" type="number" min="0" max="100"></div>
+          <div style="grid-column:1/-1;"><label class="field-label">Work done today *</label><textarea id="upd-work" style="min-height:60px;"></textarea></div>
+          <div><label class="field-label">Total cost used so far (₹ Lakh)</label><input id="upd-cost" type="number"></div>
+          <div><label class="field-label">Note (optional)</label><input id="upd-note"></div>
+
+          <div style="grid-column:1/-1;border-top:1px solid ${C.border};margin-top:4px;padding-top:12px;">
+            <label class="field-label">Site photo * — captured live with your camera, no gallery uploads allowed</label>
+            ${f.photoDataUrl
+              ? `<img src="${f.photoDataUrl}" alt="Captured photo preview" style="width:160px;border-radius:8px;border:1px solid ${C.border};display:block;margin-bottom:8px;">
+                 <button type="button" class="btn-ghost" onclick="retakePhoto()">Retake photo</button>`
+              : `<button type="button" class="btn-primary" onclick="openCamera()">Open camera & capture photo</button>
+                 ${f.cameraError ? `<div style="font-size:12px;color:${C.accent2};margin-top:6px;">${esc(f.cameraError)}</div>` : ""}`}
+          </div>
+
+          <div style="grid-column:1/-1;">
+            <label class="field-label">Site location * — captured from your device's GPS at the moment you save</label>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <button type="button" class="btn-ghost" onclick="captureLocation()">
+                ${f.locationStatus==="capturing" ? "Getting location…" : f.locationStatus==="captured" ? "Recapture location" : "Capture current location"}
+              </button>
+              ${f.locationStatus==="captured" ? `<span class="mono" style="font-size:12px;color:${C.success};">${f.lat.toFixed(5)}, ${f.lng.toFixed(5)}</span>` : ""}
+              ${f.locationStatus==="error" ? `<span style="font-size:12px;color:${C.accent2};">${esc(f.locationError)}</span>` : ""}
+            </div>
+          </div>
+
+          <div style="grid-column:1/-1;background:#fff;border:1px solid ${C.border};border-radius:10px;padding:10px 12px;font-size:12px;color:${C.muted};display:flex;gap:8px;align-items:flex-start;">
+            ${cameraIcon(C.muted)}
+            <span>After you save, the photo's GPS tag is checked against the registered site boundary, and it's reviewed for authenticity (AI-generated images, stock photos, or images that don't match the reported work) before it counts toward this tender's record.</span>
+          </div>
+
+          <div style="grid-column:1/-1;">
+            ${!canSubmit ? `<div style="font-size:12px;color:${C.accent2};margin-bottom:8px;">A photo and a captured location are both required before you can save.</div>` : ""}
+            <button class="btn-primary" ${canSubmit && !state.updateSubmitting ? "" : "disabled"} onclick="submitUpdate('${t.id}')">${state.updateSubmitting?"Saving…":"Save update"}</button>
+          </div>
+        </div>` : ""}
+      </div>`;
+    }).join("")}
+  </div>`;
+}
+
+function adminDashHTML(){
+  const s = state.session;
+  const totalFlagged = state.tenders.filter(t=>(t.flags||[]).length>0).length;
+  const tabs = [["overview","Overview"],["photos","Photo reviews"],["new","New tender"],["complaints","Citizen reports"],["ratings","Contractor ratings"]];
+  let body = "";
+  if (state.adminTab==="overview"){
+    const flaggedTenders = state.tenders.filter(t=>(t.flags||[]).length>0);
+    body = `
+    <div style="display:flex;gap:14px;margin-bottom:20px;flex-wrap:wrap;">
+      ${[["Total tenders",state.tenders.length,C.primary],["Flagged",totalFlagged,C.accent2],["Open reports",state.adminComplaints.filter(c=>c.status==="pending").length,C.accent]]
+        .map(([l,v,col])=>`<div class="card" style="padding:14px 18px;min-width:130px;"><div class="mono" style="font-size:24px;color:${col};font-weight:700;">${v}</div><div style="font-size:12.5px;color:${C.muted};">${l}</div></div>`).join("")}
+    </div>
+    <h2 style="font-size:16.5px;font-weight:700;margin-bottom:10px;">Flagged tenders needing review</h2>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      ${flaggedTenders.map(t=>`<div class="card tender-row" style="padding:12px 16px;display:flex;justify-content:space-between;" onclick="openTender('${t.id}')">
+        <span style="font-size:14px;font-weight:500;">${esc(t.title)}</span>
+        <span class="mono" style="font-size:12px;color:${C.accent2};font-weight:600;">${(t.flags||[]).length} flag(s)</span>
+      </div>`).join("")}
+      ${totalFlagged===0 ? `<div style="font-size:13.5px;color:${C.muted};">Nothing currently flagged.</div>` : ""}
+    </div>`;
+  } else if (state.adminTab==="photos"){
+    const pending = state.adminUpdates.filter(u=>u.photo_base64).slice().sort((a,b)=> a.date<b.date?1:-1);
+    body = `<div style="display:flex;flex-direction:column;gap:12px;">
+      ${pending.length===0 ? `<div style="font-size:13.5px;color:${C.muted};">No progress photos submitted yet.</div>` : ""}
+      ${pending.map(u => {
+        const t = state.tenders.find(tt=>tt.id===u.tender_id);
+        return `<div class="card" style="padding:18px;display:flex;gap:16px;flex-wrap:wrap;">
+          <img src="${u.photo_base64}" alt="Progress photo" style="width:130px;height:130px;object-fit:cover;border-radius:10px;border:1px solid ${C.border};flex-shrink:0;">
+          <div style="flex:1 1 260px;min-width:220px;">
+            <div style="font-size:15px;font-weight:700;">${esc(t?t.title:u.tender_id)}</div>
+            <div style="font-size:12.5px;color:${C.muted};margin-bottom:6px;">${fmtDate(u.date)} · ${esc(u.work_done)}</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">${aiCheckPill(u.ai_check_status)}${locationPill(u)}</div>
+            <input id="ai-note-${u.id}" placeholder="Review note (e.g. what you checked, what looked off)" value="${esc(u.ai_check_note||"")}" style="margin-bottom:8px;">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn-ghost" onclick="setAiCheckStatus('${u.id}','verified')">Mark verified</button>
+              <button class="btn-accent" onclick="setAiCheckStatus('${u.id}','flagged')">Flag as suspicious</button>
+            </div>
+          </div>
+        </div>`;
+      }).join("")}
+    </div>`;
+  } else if (state.adminTab==="new"){
+    body = `<div class="card grid-2" style="padding:20px;max-width:640px;">
+      ${state.newTenderError ? `<div style="grid-column:1/-1;font-size:13px;color:${C.accent2};">${esc(state.newTenderError)}</div>` : ""}
+      <div style="grid-column:1/-1;"><label class="field-label">Tender title *</label><input id="nt-title"></div>
+      <div><label class="field-label">Department *</label><input id="nt-dept"></div>
+      <div><label class="field-label">Location *</label><input id="nt-loc"></div>
+      <div><label class="field-label">Category</label><select id="nt-cat">${CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join("")}</select></div>
+      <div><label class="field-label">Budget (₹ Lakh) *</label><input id="nt-budget" type="number"></div>
+      <div><label class="field-label">Award to company *</label><select id="nt-company"><option value="">Select…</option>${state.companies.map(c=>`<option value="${c.id}">${esc(c.display_name)}</option>`).join("")}</select></div>
+      <div><label class="field-label">Start date *</label><input id="nt-start" type="date"></div>
+      <div><label class="field-label">Target completion *</label><input id="nt-end" type="date"></div>
+      <div><label class="field-label">Site latitude (optional)</label><input id="nt-lat" type="number" step="0.0001" placeholder="e.g. 28.5548"></div>
+      <div><label class="field-label">Site longitude (optional)</label><input id="nt-lng" type="number" step="0.0001" placeholder="e.g. 77.5575"></div>
+      <div style="grid-column:1/-1;font-size:12px;color:${C.muted};margin-top:-6px;">Set the site's coordinates so daily progress photos can be checked against the actual location. Without this, photos still get an authenticity review but no location check.</div>
+      <div style="grid-column:1/-1;"><label class="field-label">Scope of work</label><textarea id="nt-desc" style="min-height:70px;"></textarea></div>
+      <div style="grid-column:1/-1;"><button class="btn-primary" onclick="submitNewTender()">Publish tender</button></div>
+    </div>`;
+  } else if (state.adminTab==="complaints"){
+    const list = state.adminComplaints.slice().reverse();
+    body = `<div style="display:flex;flex-direction:column;gap:12px;">
+      ${list.length===0 ? `<div style="font-size:13.5px;color:${C.muted};">No reports filed yet.</div>` : ""}
+      ${list.map(c => {
+        const t = state.tenders.find(tt=>tt.id===c.tender_id);
+        const statusColor = c.status==="pending" ? C.accent2 : c.status==="reviewed" ? C.accent : C.success;
+        return `<div class="card" style="padding:18px;">
+          <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+            <div style="font-size:15.5px;font-weight:700;">${esc(t?t.title:c.tender_id)}</div>
+            <span class="pill" style="color:${statusColor};background:${statusColor}18;">${c.status}</span>
+          </div>
+          <div style="font-size:12.5px;color:${C.muted};margin:3px 0 8px;">${esc(c.name)} · ${fmtDate(c.date)}</div>
+          <div style="font-size:14px;">${esc(c.description)}</div>
+          <div style="margin-top:12px;display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
+            <input id="resp-${c.id}" style="flex:1 1 260px;" placeholder="Response / action taken" value="${esc(c.admin_response)}">
+            <button class="btn-ghost" onclick="resolveComplaint('${c.id}','reviewed')">Mark reviewed</button>
+            <button class="btn-primary" onclick="resolveComplaint('${c.id}','resolved')">Mark resolved</button>
+          </div>
+        </div>`;
+      }).join("")}
+    </div>`;
+  } else if (state.adminTab==="ratings"){
+    body = `<div style="display:flex;flex-direction:column;gap:12px;">
+      ${state.companies.map(c => `<div class="card" style="padding:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+        ${ratingSeal(c.rating)}
+        <div style="flex:1 1 200px;"><div style="font-size:15.5px;font-weight:700;">${esc(c.display_name)}</div><div class="mono" style="font-size:12px;color:${C.muted};">${c.id}</div></div>
+        <input id="rating-${c.id}" type="number" step="0.1" min="0" max="5" style="width:90px;" placeholder="${Number(c.rating||0).toFixed(1)}">
+        <button class="btn-ghost" onclick="saveRating('${c.id}')">Update rating</button>
+      </div>`).join("")}
+    </div>`;
+  }
+  return `
+  <div class="card" style="padding:20px;margin-bottom:18px;"><h1 style="font-size:22px;font-weight:800;">${esc(s.display_name)}</h1></div>
+  <div style="display:flex;gap:6px;margin-bottom:18px;background:#fff;border-radius:999px;padding:4px;box-shadow:var(--shadow);width:fit-content;flex-wrap:wrap;">
+    ${tabs.map(([key,label]) => `<button onclick="setAdminTab('${key}')" style="font-size:13.5px;font-weight:600;padding:8px 15px;border:none;border-radius:999px;background:${state.adminTab===key?C.primary:"transparent"};color:${state.adminTab===key?"#fff":C.muted};">${label}</button>`).join("")}
+  </div>
+  ${body}`;
+}
+
+/* ---------- master render ---------- */
+function viewBodyHTML(){
+  if (state.view==="browse") return browseHTML();
+  if (state.view==="detail") return detailHTML();
+  if (state.view==="login") return loginHTML();
+  if (state.view==="companyDash" && state.session?.role==="company") return companyDashHTML();
+  if (state.view==="adminDash" && state.session?.role==="admin") return adminDashHTML();
+  return browseHTML();
+}
+
+function cameraModalHTML(){
+  if (!state.updateForm.cameraOpen) return "";
+  return `
+  <div style="position:fixed;inset:0;background:rgba(7,54,51,.85);z-index:1000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:20px;">
+    <video id="camera-video" autoplay playsinline muted style="max-width:min(92vw,520px);max-height:60vh;border-radius:14px;background:#000;box-shadow:0 8px 40px rgba(0,0,0,.5);"></video>
+    <div style="display:flex;gap:12px;">
+      <button class="btn-ghost" style="background:#fff;" onclick="closeCamera(false)">Cancel</button>
+      <button class="btn-primary" style="padding:12px 28px;font-size:15px;" onclick="capturePhoto()">Capture photo</button>
+    </div>
+    <div style="color:rgba(255,255,255,.7);font-size:12px;">Point the camera at the site, then tap Capture.</div>
+  </div>`;
+}
+
+function render(){
+  const active = document.activeElement;
+  const activeId = active && active.id;
+  const selStart = active && "selectionStart" in active ? active.selectionStart : null;
+  const selEnd = active && "selectionEnd" in active ? active.selectionEnd : null;
+
+  const app = document.getElementById("app");
+  if (!state.loaded){
+    app.innerHTML = `<div style="min-height:480px;display:flex;align-items:center;justify-content:center;color:${C.muted};">Loading Nirmaan Setu…</div>`;
+    return;
+  }
+  app.innerHTML = `
+    ${navbarHTML()}
+    ${errorBannerHTML()}
+    ${statsStripHTML()}
+    <div style="max-width:1020px;margin:0 auto;padding:22px 24px 40px;">${viewBodyHTML()}</div>
+    <div style="border-top:1px solid ${C.border};padding:16px 24px;font-size:11.5px;color:${C.muted};text-align:center;">
+      Nirmaan Setu — a public tender transparency register.
+    </div>
+    ${cameraModalHTML()}`;
+
+  if (state.updateForm.cameraOpen && activeStream){
+    const video = document.getElementById("camera-video");
+    if (video && !video.srcObject) video.srcObject = activeStream;
+  }
+
+  if (activeId){
+    const el = document.getElementById(activeId);
+    if (el){ el.focus(); if (selStart!=null){ try { el.setSelectionRange(selStart, selEnd); } catch(e){} } }
+  }
+}
+
+/* ---------- boot ---------- */
+init();
+</script>
+</body>
+</html>
